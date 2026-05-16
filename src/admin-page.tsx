@@ -53,12 +53,24 @@ type AdminAddonRuntimeProps = {
   }
   settings: Record<string, string>
   contentTypes: ContentType[]
+  runAction: <T = unknown>(action: string, input?: unknown) => Promise<T>
   saveSettings: (values: Record<string, string>) => Promise<Record<string, string>>
 }
 
 type AdminAddonRuntimeModule = {
   addonId: string
   AdminPage: React.ComponentType<AdminAddonRuntimeProps>
+}
+
+type ContentHealthReport = {
+  staleDrafts: {
+    byContentType: Array<{
+      count: number
+      name: string
+      slug: string
+    }>
+    total: number
+  }
 }
 
 declare global {
@@ -391,7 +403,7 @@ function buildEmptyConfig(slug: string): ContentHealthContentTypeConfig {
   }
 }
 
-function AdminPage({ contentTypes, saveSettings, settings }: AdminAddonRuntimeProps) {
+function AdminPage({ contentTypes, runAction, saveSettings, settings }: AdminAddonRuntimeProps) {
   const collectionTypes = React.useMemo(
     () => contentTypes.filter((contentType) => contentType.kind === 'collection'),
     [contentTypes],
@@ -402,12 +414,34 @@ function AdminPage({ contentTypes, saveSettings, settings }: AdminAddonRuntimePr
     initial.contentTypes,
   )
   const [staleDraftDays, setStaleDraftDays] = React.useState(initial.staleDraftDays)
+  const [report, setReport] = React.useState<ContentHealthReport | null>(null)
+  const [loadingReport, setLoadingReport] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
 
   React.useEffect(() => {
     setConfiguredTypes(initial.contentTypes)
     setStaleDraftDays(initial.staleDraftDays)
   }, [initial])
+
+  React.useEffect(() => {
+    let active = true
+    setLoadingReport(true)
+
+    runAction<ContentHealthReport>('getReport')
+      .then((nextReport) => {
+        if (active) setReport(nextReport)
+      })
+      .catch(() => {
+        if (active) setReport(null)
+      })
+      .finally(() => {
+        if (active) setLoadingReport(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [runAction, settings])
 
   const configuredCount = configuredTypes.length
   const configuredFieldCount = configuredTypes.reduce(
@@ -504,8 +538,8 @@ function AdminPage({ contentTypes, saveSettings, settings }: AdminAddonRuntimePr
         />
         <StatCard
           label="Stale Drafts"
-          value={staleDraftEnabledCount}
-          hint="Types with stale draft checks enabled"
+          value={loadingReport ? '…' : report?.staleDrafts.total ?? 0}
+          hint="Draft entries currently marked as stale"
         />
       </div>
 

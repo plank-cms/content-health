@@ -17,6 +17,7 @@
   "include": [
     "src/index.ts",
     "src/admin.ts",
+    "src/server.ts",
     "src/plank.ts",
     "src/defaults.ts"
   ]

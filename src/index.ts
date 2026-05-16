@@ -1,5 +1,6 @@
 export { adminModule } from './admin.js'
 export { manifest } from './plank.js'
+export { serverModule } from './server.js'
 export { defaultSettings, defaultChecks } from './defaults.js'
 export type { ContentHealthAdminModule, ContentHealthAdminCheck } from './admin.js'
 export type { ContentHealthContentTypeConfig, ContentHealthSettings } from './defaults.js'
