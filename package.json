@@ -1,0 +1,41 @@
+{
+  "name": "@plank-cms/addon-content-health",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Official Plank add-on for content health insights.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./plank": {
+      "import": "./dist/plank.js",
+      "types": "./dist/plank.d.ts"
+    },
+    "./admin": {
+      "import": "./dist/admin.js",
+      "types": "./dist/admin.d.ts"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "http://localhost:4000/api/packages/martirale/npm/"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist"
+  },
+  "keywords": [
+    "plank",
+    "addon",
+    "content-health"
+  ],
+  "license": "ISC",
+  "devDependencies": {
+    "typescript": "6.0.3"
+  }
+}
