@@ -59,18 +59,35 @@ type AdminAddonRuntimeProps = {
 
 type AdminAddonRuntimeModule = {
   addonId: string
-  AdminPage: React.ComponentType<AdminAddonRuntimeProps>
+  DashboardPage?: React.ComponentType<AdminAddonRuntimeProps>
+  AdminPage?: React.ComponentType<AdminAddonRuntimeProps>
 }
 
-type ContentHealthReport = {
-  staleDrafts: {
-    byContentType: Array<{
-      count: number
-      name: string
-      slug: string
-    }>
-    total: number
-  }
+type Entry = Record<string, unknown> & {
+  id: string
+  status: 'draft' | 'scheduled' | 'published' | 'pending' | 'in_review'
+  updated_at: string
+  _author_first_name: string | null
+  _author_last_name: string | null
+  _author_avatar_url: string | null
+}
+
+type EntriesResponse = {
+  data: Entry[]
+  total: number
+  page: number
+  limit: number
+}
+
+type StaleDraftItem = {
+  authorAvatarUrl: string | null
+  authorName: string
+  contentTypeName: string
+  contentTypeSlug: string
+  entryId: string
+  entryLabel: string
+  staleDays: number
+  updatedAt: string
 }
 
 declare global {
@@ -88,8 +105,9 @@ const colors = {
   foreground: 'var(--color-foreground)',
   muted: 'var(--color-muted-foreground)',
   border: 'var(--color-border)',
-  accent: 'var(--color-accent)',
   input: 'var(--color-input)',
+  warning: '#facc15',
+  warningText: '#fde68a',
 }
 
 function humanize(value: string) {
@@ -183,6 +201,17 @@ function miniActionButtonStyle(): React.CSSProperties {
     height: 28,
     justifyContent: 'center',
     width: 28,
+  }
+}
+
+function tableCellStyle(align: 'left' | 'center' | 'right' = 'left'): React.CSSProperties {
+  return {
+    borderTop: `1px solid ${colors.border}`,
+    color: colors.foreground,
+    fontSize: 14,
+    padding: '14px 16px',
+    textAlign: align,
+    verticalAlign: 'middle',
   }
 }
 
@@ -335,7 +364,7 @@ function FieldBucket({
                     onClick={() => onRemove(field.name)}
                     style={miniActionButtonStyle()}
                   >
-                    −
+                    -
                   </button>
                 </div>
               ))}
@@ -403,7 +432,311 @@ function buildEmptyConfig(slug: string): ContentHealthContentTypeConfig {
   }
 }
 
-function AdminPage({ contentTypes, runAction, saveSettings, settings }: AdminAddonRuntimeProps) {
+function daysSince(value: string): number {
+  const updatedAt = new Date(value)
+  if (Number.isNaN(updatedAt.getTime())) return 0
+  const diff = Date.now() - updatedAt.getTime()
+  return Math.max(0, Math.floor(diff / 86400000))
+}
+
+function getEntryLabelField(
+  contentType: ContentType,
+  config?: ContentHealthContentTypeConfig,
+): string | null {
+  const fields = contentType.fields ?? []
+  const direct = ['title', 'name', 'entry'].find((name) => fields.some((field) => field.name === name))
+  if (direct) return direct
+
+  const configured = config?.requiredTextFields.find((name) =>
+    fields.some((field) => field.name === name),
+  )
+  if (configured) return configured
+
+  const uidField = fields.find((field) => field.type === 'uid')
+  if (uidField) return uidField.name
+
+  const stringField = fields.find((field) => ['string', 'text', 'richtext'].includes(field.type))
+  return stringField?.name ?? null
+}
+
+function getEntryLabel(
+  entry: Entry,
+  contentType: ContentType,
+  config?: ContentHealthContentTypeConfig,
+): string {
+  const fieldName = getEntryLabelField(contentType, config)
+  const value = fieldName ? entry[fieldName] : null
+
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return entry.id
+}
+
+function getAuthorName(entry: Entry): string {
+  const parts = [entry._author_first_name, entry._author_last_name].filter(Boolean)
+  return parts.length > 0 ? parts.join(' ') : 'Unknown author'
+}
+
+function getAuthorInitials(name: string): string {
+  const parts = name.split(' ').filter(Boolean)
+  const initials = parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '')
+  return initials.join('') || '?'
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date)
+}
+
+async function fetchEntriesPage(slug: string, page: number, limit: number): Promise<EntriesResponse> {
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: String(limit),
+    status: 'draft',
+    sort: 'updated_at',
+    order: 'asc',
+  })
+
+  const response = await fetch(`/cms/admin/content-types/${slug}/entries?${params.toString()}`, {
+    credentials: 'include',
+  })
+
+  if (!response.ok) {
+    throw new Error(`Could not load drafts for ${slug}`)
+  }
+
+  return (await response.json()) as EntriesResponse
+}
+
+async function fetchDraftEntries(slug: string): Promise<Entry[]> {
+  const limit = 100
+  const firstPage = await fetchEntriesPage(slug, 1, limit)
+  const pages = Math.max(1, Math.ceil((firstPage.total ?? 0) / limit))
+  const items = [...(firstPage.data ?? [])]
+
+  if (pages === 1) return items
+
+  const rest = await Promise.all(
+    Array.from({ length: pages - 1 }, (_, index) => fetchEntriesPage(slug, index + 2, limit)),
+  )
+
+  for (const page of rest) {
+    items.push(...(page.data ?? []))
+  }
+
+  return items
+}
+
+function DashboardPage({ contentTypes, settings }: AdminAddonRuntimeProps) {
+  const parsedSettings = React.useMemo(() => parseSettings(settings), [settings])
+  const collectionTypes = React.useMemo(
+    () => contentTypes.filter((contentType) => contentType.kind === 'collection'),
+    [contentTypes],
+  )
+
+  const monitoredTypes = React.useMemo(
+    () =>
+      parsedSettings.contentTypes.filter(
+        (contentType) => contentType.enabled && contentType.checkStaleDrafts,
+      ),
+    [parsedSettings.contentTypes],
+  )
+
+  const [items, setItems] = React.useState<StaleDraftItem[]>([])
+  const [loading, setLoading] = React.useState(true)
+
+  React.useEffect(() => {
+    let active = true
+    setLoading(true)
+
+    Promise.all(
+      monitoredTypes.map(async (configuredType) => {
+        const contentType = collectionTypes.find((item) => item.slug === configuredType.slug)
+        if (!contentType) return [] as StaleDraftItem[]
+
+        const drafts = await fetchDraftEntries(contentType.slug)
+
+        return drafts
+          .filter((entry) => daysSince(entry.updated_at) >= parsedSettings.staleDraftDays)
+          .map((entry) => ({
+            authorAvatarUrl: entry._author_avatar_url,
+            authorName: getAuthorName(entry),
+            contentTypeName: contentType.name,
+            contentTypeSlug: contentType.slug,
+            entryId: entry.id,
+            entryLabel: getEntryLabel(entry, contentType, configuredType),
+            staleDays: daysSince(entry.updated_at),
+            updatedAt: entry.updated_at,
+          }))
+      }),
+    )
+      .then((groups) => {
+        if (!active) return
+        const nextItems = groups
+          .flat()
+          .sort((left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime())
+        setItems(nextItems)
+      })
+      .catch(() => {
+        if (active) setItems([])
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [collectionTypes, monitoredTypes, parsedSettings.staleDraftDays])
+
+  return (
+    <div style={{ display: 'grid', gap: 24 }}>
+      <div style={cardStyle(24)}>
+        <div
+          style={{
+            alignItems: 'center',
+            borderBottom: `1px solid ${colors.border}`,
+            display: 'flex',
+            gap: 16,
+            justifyContent: 'space-between',
+            margin: '-24px -24px 0',
+            padding: '20px 24px',
+          }}
+        >
+          <SectionTitle
+            title="Stale Draft Findings"
+            description="Review every stale draft across the monitored collection types, ordered from the oldest update to the most recent one."
+          />
+          <div
+            style={{
+              alignSelf: 'flex-start',
+              color: colors.foreground,
+              fontSize: 16,
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {loading ? '...' : `${items.length} stale drafts`}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 24 }}>
+          {loading ? (
+            <div style={{ color: colors.muted, fontSize: 14 }}>Loading stale drafts...</div>
+          ) : monitoredTypes.length === 0 ? (
+            <div style={{ color: colors.muted, fontSize: 14 }}>
+              Enable stale draft checks for at least one collection type in Admin.
+            </div>
+          ) : items.length === 0 ? (
+            <div style={{ color: colors.muted, fontSize: 14 }}>
+              No stale drafts match the current threshold.
+            </div>
+          ) : (
+            <div
+              style={{
+                border: `1px solid ${colors.border}`,
+                borderRadius: 14,
+                overflow: 'hidden',
+              }}
+            >
+              <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Entry</th>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Collection Type</th>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Last Updated</th>
+                    <th style={{ ...tableCellStyle('center'), ...smallLabelStyle(), borderTop: 'none' }}>Author</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((item) => (
+                    <tr key={`${item.contentTypeSlug}:${item.entryId}`}>
+                      <td style={tableCellStyle()}>
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          <a
+                            href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}
+                            style={{
+                              color: colors.foreground,
+                              fontSize: 14,
+                              fontWeight: 600,
+                              textDecoration: 'none',
+                            }}
+                          >
+                            {item.entryLabel}
+                          </a>
+                          <span style={{ color: colors.warningText, fontSize: 12 }}>
+                            Stale for {item.staleDays} {item.staleDays === 1 ? 'day' : 'days'}
+                          </span>
+                        </div>
+                      </td>
+                      <td style={tableCellStyle()}>
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          <span style={{ fontWeight: 600 }}>{item.contentTypeName}</span>
+                          <span style={{ color: colors.muted, fontSize: 12 }}>{item.contentTypeSlug}</span>
+                        </div>
+                      </td>
+                      <td style={tableCellStyle()}>
+                        <span style={{ color: colors.muted }}>{formatDateTime(item.updatedAt)}</span>
+                      </td>
+                      <td style={tableCellStyle('center')}>
+                        <div
+                          title={item.authorName}
+                          style={{
+                            alignItems: 'center',
+                            display: 'inline-flex',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {item.authorAvatarUrl ? (
+                            <img
+                              src={item.authorAvatarUrl}
+                              alt={item.authorName}
+                              style={{
+                                borderRadius: 999,
+                                display: 'block',
+                                height: 30,
+                                objectFit: 'cover',
+                                width: 30,
+                              }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                alignItems: 'center',
+                                background: colors.input,
+                                borderRadius: 999,
+                                color: colors.foreground,
+                                display: 'inline-flex',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                height: 30,
+                                justifyContent: 'center',
+                                width: 30,
+                              }}
+                            >
+                              {getAuthorInitials(item.authorName)}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AdminPage({ contentTypes, saveSettings, settings }: AdminAddonRuntimeProps) {
   const collectionTypes = React.useMemo(
     () => contentTypes.filter((contentType) => contentType.kind === 'collection'),
     [contentTypes],
@@ -414,34 +747,12 @@ function AdminPage({ contentTypes, runAction, saveSettings, settings }: AdminAdd
     initial.contentTypes,
   )
   const [staleDraftDays, setStaleDraftDays] = React.useState(initial.staleDraftDays)
-  const [report, setReport] = React.useState<ContentHealthReport | null>(null)
-  const [loadingReport, setLoadingReport] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
 
   React.useEffect(() => {
     setConfiguredTypes(initial.contentTypes)
     setStaleDraftDays(initial.staleDraftDays)
   }, [initial])
-
-  React.useEffect(() => {
-    let active = true
-    setLoadingReport(true)
-
-    runAction<ContentHealthReport>('getReport')
-      .then((nextReport) => {
-        if (active) setReport(nextReport)
-      })
-      .catch(() => {
-        if (active) setReport(null)
-      })
-      .finally(() => {
-        if (active) setLoadingReport(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [runAction, settings])
 
   const configuredCount = configuredTypes.length
   const configuredFieldCount = configuredTypes.reduce(
@@ -452,8 +763,6 @@ function AdminPage({ contentTypes, runAction, saveSettings, settings }: AdminAdd
       + config.relationFields.length,
     0,
   )
-
-  const staleDraftEnabledCount = configuredTypes.filter((config) => config.checkStaleDrafts).length
 
   const configuredMap = React.useMemo(
     () => new Map(configuredTypes.map((contentType) => [contentType.slug, contentType])),
@@ -523,7 +832,7 @@ function AdminPage({ contentTypes, runAction, saveSettings, settings }: AdminAdd
         style={{
           display: 'grid',
           gap: 16,
-          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+          gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
         }}
       >
         <StatCard
@@ -535,11 +844,6 @@ function AdminPage({ contentTypes, runAction, saveSettings, settings }: AdminAdd
           label="Mapped Fields"
           value={configuredFieldCount}
           hint="Fields checked across configured types"
-        />
-        <StatCard
-          label="Stale Drafts"
-          value={loadingReport ? '…' : report?.staleDrafts.total ?? 0}
-          hint="Draft entries currently marked as stale"
         />
       </div>
 
@@ -567,7 +871,7 @@ function AdminPage({ contentTypes, runAction, saveSettings, settings }: AdminAdd
           disabled={saving}
           style={primaryButtonStyle(saving)}
         >
-          {saving ? 'Saving…' : 'Save settings'}
+          {saving ? 'Saving...' : 'Save settings'}
         </button>
       </div>
 
@@ -645,7 +949,7 @@ function AdminPage({ contentTypes, runAction, saveSettings, settings }: AdminAdd
                         onClick={() => removeContentType(contentType.slug)}
                         style={miniActionButtonStyle()}
                       >
-                        −
+                        -
                       </button>
                     </div>
                   )
@@ -781,13 +1085,13 @@ function AdminPage({ contentTypes, runAction, saveSettings, settings }: AdminAdd
           </div>
         )
       })}
-
     </div>
   )
 }
 
 const runtimeModule: AdminAddonRuntimeModule = {
   addonId: 'content-health',
+  DashboardPage,
   AdminPage,
 }
 
