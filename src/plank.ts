@@ -52,6 +52,6 @@ export const manifest = {
     ],
   },
   admin: {
-    entry: './dist/admin.js',
+    entry: './dist/browser/admin.js',
   },
 } satisfies PlankAddonManifest

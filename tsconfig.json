@@ -3,14 +3,21 @@
     "target": "ES2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "types": ["node"],
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "jsx": "react-jsx",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src"]
+  "include": [
+    "src/index.ts",
+    "src/admin.ts",
+    "src/plank.ts",
+    "src/defaults.ts"
+  ]
 }

@@ -26,7 +26,7 @@
     "registry": "http://localhost:4000/api/packages/martirale/npm/"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "pnpm clean && tsc && vite build --config vite.admin.config.ts",
     "clean": "rm -rf dist"
   },
   "keywords": [
@@ -35,7 +35,15 @@
     "content-health"
   ],
   "license": "ISC",
+  "peerDependencies": {
+    "react": "^19.0.0"
+  },
   "devDependencies": {
-    "typescript": "6.0.3"
+    "@types/node": "24.10.0",
+    "@types/react": "19.2.14",
+    "@vitejs/plugin-react": "6.0.1",
+    "react": "19.2.5",
+    "typescript": "6.0.3",
+    "vite": "8.0.9"
   }
 }
