@@ -1,10 +1,47 @@
 import * as React from 'react'
 
+type ContentFieldType =
+  | 'string'
+  | 'text'
+  | 'richtext'
+  | 'number'
+  | 'boolean'
+  | 'datetime'
+  | 'media'
+  | 'media-gallery'
+  | 'relation'
+  | 'uid'
+  | 'array'
+  | 'navigation'
+
+type ContentField = {
+  name: string
+  type: ContentFieldType
+  relatedSlug?: string
+}
+
+type ContentType = {
+  fields?: ContentField[]
+  slug: string
+  name: string
+  kind: 'collection' | 'single'
+}
+
+type ContentHealthContentTypeConfig = {
+  slug: string
+  enabled: boolean
+  requiredTextFields: string[]
+  requiredMediaFields: string[]
+  relationFields: string[]
+  checkStaleDrafts: boolean
+}
+
+type ContentHealthSettings = {
+  contentTypes: ContentHealthContentTypeConfig[]
+  staleDraftDays: number
+}
+
 type AdminAddonRuntimeProps = {
-  addon: {
-    id: string
-    name: string
-  }
   definition: {
     title: string
     description: string
@@ -15,11 +52,7 @@ type AdminAddonRuntimeProps = {
     }>
   }
   settings: Record<string, string>
-  contentTypes: Array<{
-    slug: string
-    name: string
-    kind: 'collection' | 'single'
-  }>
+  contentTypes: ContentType[]
   saveSettings: (values: Record<string, string>) => Promise<Record<string, string>>
 }
 
@@ -34,79 +67,415 @@ declare global {
   }
 }
 
-function parseSettings(settings: Record<string, string>) {
-  const contentTypeSlugs = (() => {
+const TEXT_FIELD_TYPES = new Set<ContentFieldType>(['string', 'text', 'richtext', 'uid'])
+const MEDIA_FIELD_TYPES = new Set<ContentFieldType>(['media', 'media-gallery'])
+const RELATION_FIELD_TYPES = new Set<ContentFieldType>(['relation'])
+
+const colors = {
+  background: 'var(--color-background)',
+  foreground: 'var(--color-foreground)',
+  muted: 'var(--color-muted-foreground)',
+  border: 'var(--color-border)',
+  accent: 'var(--color-accent)',
+  input: 'var(--color-input)',
+}
+
+function humanize(value: string) {
+  return value.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
+}
+
+function parseSettings(settings: Record<string, string>): ContentHealthSettings {
+  const staleDraftDays = Number.parseInt(settings.staleDraftDays ?? '30', 10)
+  const contentTypes = (() => {
     try {
-      const parsed = JSON.parse(settings.contentTypeSlugs ?? '[]')
-      return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : []
+      const parsed = JSON.parse(settings.contentTypes ?? '[]')
+      if (!Array.isArray(parsed)) return []
+
+      return parsed
+        .filter((value): value is Record<string, unknown> => typeof value === 'object' && value !== null)
+        .map((value) => ({
+          slug: typeof value.slug === 'string' ? value.slug : '',
+          enabled: value.enabled !== false,
+          requiredTextFields: Array.isArray(value.requiredTextFields)
+            ? value.requiredTextFields.filter((field): field is string => typeof field === 'string')
+            : [],
+          requiredMediaFields: Array.isArray(value.requiredMediaFields)
+            ? value.requiredMediaFields.filter((field): field is string => typeof field === 'string')
+            : [],
+          relationFields: Array.isArray(value.relationFields)
+            ? value.relationFields.filter((field): field is string => typeof field === 'string')
+            : [],
+          checkStaleDrafts: value.checkStaleDrafts !== false,
+        }))
+        .filter((value) => value.slug.length > 0)
     } catch {
       return []
     }
   })()
 
-  const staleDraftDays = Number.parseInt(settings.staleDraftDays ?? '30', 10)
-
   return {
-    contentTypeSlugs,
+    contentTypes,
     staleDraftDays: Number.isFinite(staleDraftDays) ? staleDraftDays : 30,
   }
 }
 
+function cardStyle(padding = 24): React.CSSProperties {
+  return {
+    background: colors.background,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 16,
+    padding,
+  }
+}
+
+function smallLabelStyle(): React.CSSProperties {
+  return {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: 600,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+  }
+}
+
+function primaryButtonStyle(disabled: boolean): React.CSSProperties {
+  return {
+    alignItems: 'center',
+    background: colors.foreground,
+    border: `1px solid ${colors.foreground}`,
+    borderRadius: 10,
+    color: colors.background,
+    cursor: disabled ? 'default' : 'pointer',
+    display: 'inline-flex',
+    fontSize: 14,
+    fontWeight: 600,
+    gap: 8,
+    height: 40,
+    justifyContent: 'center',
+    opacity: disabled ? 0.5 : 1,
+    padding: '0 16px',
+  }
+}
+
+function miniActionButtonStyle(): React.CSSProperties {
+  return {
+    alignItems: 'center',
+    background: 'transparent',
+    border: `1px solid ${colors.border}`,
+    borderRadius: 8,
+    color: colors.foreground,
+    cursor: 'pointer',
+    display: 'inline-flex',
+    fontSize: 14,
+    fontWeight: 600,
+    height: 28,
+    justifyContent: 'center',
+    width: 28,
+  }
+}
+
 function StatCard({
+  hint,
   label,
   value,
-  hint,
 }: {
-  label: string
-  value: string | number
   hint: string
+  label: string
+  value: number | string
 }) {
   return (
-    <div className="rounded-xl border bg-background p-5">
-      <div className="text-sm font-medium text-muted-foreground">{label}</div>
-      <div className="mt-3 text-3xl font-semibold tracking-tight text-foreground">{value}</div>
-      <div className="mt-2 text-sm text-muted-foreground">{hint}</div>
+    <div style={cardStyle(24)}>
+      <div
+        style={{
+          color: colors.foreground,
+          fontSize: 18,
+          fontWeight: 600,
+          letterSpacing: '0.02em',
+          textTransform: 'uppercase',
+        }}
+      >
+        {label}
+      </div>
+      <div style={{ color: colors.foreground, fontSize: 38, fontWeight: 700, marginTop: 14 }}>
+        {value}
+      </div>
+      <div style={{ color: colors.muted, fontSize: 14, marginTop: 10 }}>{hint}</div>
     </div>
   )
 }
 
 function SectionTitle({
-  title,
   description,
+  title,
 }: {
-  title: string
   description: string
+  title: string
 }) {
   return (
-    <div className="space-y-1">
-      <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-      <p className="text-sm text-muted-foreground">{description}</p>
+    <div style={{ display: 'grid', gap: 6 }}>
+      <h2 style={{ color: colors.foreground, fontSize: 20, fontWeight: 600, margin: 0 }}>
+        {title}
+      </h2>
+      <p style={{ color: colors.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+        {description}
+      </p>
     </div>
   )
 }
 
-function AdminPage({ definition, settings, contentTypes, saveSettings }: AdminAddonRuntimeProps) {
+function ToggleSwitch({
+  checked,
+  onChange,
+}: {
+  checked: boolean
+  onChange: (next: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      style={{
+        alignItems: 'center',
+        background: checked ? colors.foreground : colors.input,
+        border: 'none',
+        borderRadius: 999,
+        cursor: 'pointer',
+        display: 'inline-flex',
+        height: 22,
+        padding: 3,
+        position: 'relative',
+        transition: 'background 160ms ease',
+        width: 40,
+      }}
+    >
+      <span
+        style={{
+          background: checked ? colors.background : colors.foreground,
+          borderRadius: 999,
+          display: 'block',
+          height: 16,
+          transform: checked ? 'translateX(18px)' : 'translateX(0)',
+          transition: 'transform 160ms ease',
+          width: 16,
+        }}
+      />
+    </button>
+  )
+}
+
+function FieldBucket({
+  configured,
+  fields,
+  label,
+  onAdd,
+  onRemove,
+}: {
+  configured: string[]
+  fields: ContentField[]
+  label: string
+  onAdd: (fieldName: string) => void
+  onRemove: (fieldName: string) => void
+}) {
+  const configuredFields = configured
+    .map((fieldName) => fields.find((field) => field.name === fieldName))
+    .filter((field): field is ContentField => Boolean(field))
+
+  const availableFields = fields.filter((field) => !configured.includes(field.name))
+
+  return (
+    <div style={{ display: 'grid', gap: 16 }}>
+      <div style={{ color: colors.foreground, fontSize: 15, fontWeight: 600 }}>{label}</div>
+
+      <div
+        style={{
+          display: 'grid',
+          gap: 16,
+          alignItems: 'start',
+          gridTemplateColumns: availableFields.length > 0 ? 'repeat(2, minmax(0, 1fr))' : '1fr',
+        }}
+      >
+        <div style={{ display: 'grid', gap: 10 }}>
+          <p style={{ ...smallLabelStyle(), margin: 0 }}>Configured</p>
+          {configuredFields.length > 0 ? (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {configuredFields.map((field) => (
+                <div
+                  key={field.name}
+                  style={{
+                    alignItems: 'center',
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: 10,
+                    color: colors.foreground,
+                    display: 'flex',
+                    gap: 10,
+                    height: 56,
+                    padding: '10px 12px',
+                  }}
+                >
+                  <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>
+                    {humanize(field.name)}
+                  </span>
+                  <span style={{ color: colors.muted, fontSize: 12 }}>{field.type}</span>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(field.name)}
+                    style={miniActionButtonStyle()}
+                  >
+                    −
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div
+              style={{
+                border: `1px dashed ${colors.border}`,
+                borderRadius: 10,
+                color: colors.muted,
+                fontSize: 14,
+                padding: '12px 14px',
+              }}
+            >
+              No fields configured.
+            </div>
+          )}
+        </div>
+
+        {availableFields.length > 0 && (
+          <div style={{ display: 'grid', gap: 10 }}>
+            <p style={{ ...smallLabelStyle(), margin: 0 }}>Available</p>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {availableFields.map((field) => (
+                <div
+                  key={field.name}
+                  style={{
+                    alignItems: 'center',
+                    border: `1px dashed ${colors.border}`,
+                    borderRadius: 10,
+                    color: colors.muted,
+                    display: 'flex',
+                    gap: 10,
+                    height: 56,
+                    padding: '10px 12px',
+                  }}
+                >
+                  <span style={{ flex: 1, fontSize: 14 }}>{humanize(field.name)}</span>
+                  <span style={{ fontSize: 12 }}>{field.type}</span>
+                  <button
+                    type="button"
+                    onClick={() => onAdd(field.name)}
+                    style={miniActionButtonStyle()}
+                  >
+                    +
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function buildEmptyConfig(slug: string): ContentHealthContentTypeConfig {
+  return {
+    slug,
+    enabled: true,
+    requiredTextFields: [],
+    requiredMediaFields: [],
+    relationFields: [],
+    checkStaleDrafts: true,
+  }
+}
+
+function AdminPage({ contentTypes, saveSettings, settings }: AdminAddonRuntimeProps) {
   const collectionTypes = React.useMemo(
     () => contentTypes.filter((contentType) => contentType.kind === 'collection'),
     [contentTypes],
   )
 
   const initial = React.useMemo(() => parseSettings(settings), [settings])
-  const [selectedTypes, setSelectedTypes] = React.useState<string[]>(initial.contentTypeSlugs)
+  const [configuredTypes, setConfiguredTypes] = React.useState<ContentHealthContentTypeConfig[]>(
+    initial.contentTypes,
+  )
   const [staleDraftDays, setStaleDraftDays] = React.useState(initial.staleDraftDays)
   const [saving, setSaving] = React.useState(false)
 
   React.useEffect(() => {
-    setSelectedTypes(initial.contentTypeSlugs)
+    setConfiguredTypes(initial.contentTypes)
     setStaleDraftDays(initial.staleDraftDays)
   }, [initial])
+
+  const configuredCount = configuredTypes.length
+  const configuredFieldCount = configuredTypes.reduce(
+    (total, config) =>
+      total
+      + config.requiredTextFields.length
+      + config.requiredMediaFields.length
+      + config.relationFields.length,
+    0,
+  )
+
+  const staleDraftEnabledCount = configuredTypes.filter((config) => config.checkStaleDrafts).length
+
+  const configuredMap = React.useMemo(
+    () => new Map(configuredTypes.map((contentType) => [contentType.slug, contentType])),
+    [configuredTypes],
+  )
+
+  function addContentType(slug: string) {
+    setConfiguredTypes((current) => {
+      if (current.some((contentType) => contentType.slug === slug)) return current
+      return [...current, buildEmptyConfig(slug)]
+    })
+  }
+
+  function removeContentType(slug: string) {
+    setConfiguredTypes((current) => current.filter((contentType) => contentType.slug !== slug))
+  }
+
+  function patchContentType(
+    slug: string,
+    updater: (current: ContentHealthContentTypeConfig) => ContentHealthContentTypeConfig,
+  ) {
+    setConfiguredTypes((current) =>
+      current.map((contentType) =>
+        contentType.slug === slug ? updater(contentType) : contentType,
+      ),
+    )
+  }
+
+  function addField(
+    slug: string,
+    key: 'requiredTextFields' | 'requiredMediaFields' | 'relationFields',
+    fieldName: string,
+  ) {
+    patchContentType(slug, (current) => ({
+      ...current,
+      [key]: current[key].includes(fieldName) ? current[key] : [...current[key], fieldName],
+    }))
+  }
+
+  function removeField(
+    slug: string,
+    key: 'requiredTextFields' | 'requiredMediaFields' | 'relationFields',
+    fieldName: string,
+  ) {
+    patchContentType(slug, (current) => ({
+      ...current,
+      [key]: current[key].filter((value) => value !== fieldName),
+    }))
+  }
 
   async function handleSave() {
     setSaving(true)
 
     try {
       await saveSettings({
-        contentTypeSlugs: JSON.stringify(selectedTypes),
+        contentTypes: JSON.stringify(configuredTypes),
         staleDraftDays: String(staleDraftDays),
       })
     } finally {
@@ -114,109 +483,271 @@ function AdminPage({ definition, settings, contentTypes, saveSettings }: AdminAd
     }
   }
 
-  function toggleContentType(slug: string, checked: boolean) {
-    setSelectedTypes((current) =>
-      checked ? [...current, slug] : current.filter((value) => value !== slug),
-    )
-  }
-
   return (
-    <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-3">
-        <StatCard
-          label="Checks"
-          value={definition.checks.length}
-          hint="Configured issue detectors"
-        />
+    <div style={{ display: 'grid', gap: 24 }}>
+      <div
+        style={{
+          display: 'grid',
+          gap: 16,
+          gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+        }}
+      >
         <StatCard
           label="Collections"
-          value={selectedTypes.length}
+          value={configuredCount}
           hint="Collection types included in analysis"
         />
         <StatCard
-          label="Draft Window"
-          value={`${staleDraftDays}d`}
-          hint="Entries older than this count as stale"
+          label="Mapped Fields"
+          value={configuredFieldCount}
+          hint="Fields checked across configured types"
+        />
+        <StatCard
+          label="Stale Drafts"
+          value={staleDraftEnabledCount}
+          hint="Types with stale draft checks enabled"
         />
       </div>
 
-      <div className="rounded-xl border bg-background p-6">
+      <div
+        style={{
+          ...cardStyle(24),
+          alignItems: 'center',
+          display: 'flex',
+          gap: 16,
+          justifyContent: 'space-between',
+        }}
+      >
+        <div style={{ display: 'grid', gap: 6 }}>
+          <h2 style={{ color: colors.foreground, fontSize: 18, fontWeight: 600, margin: 0 }}>
+            Configuration
+          </h2>
+          <p style={{ color: colors.muted, fontSize: 14, margin: 0 }}>
+            Map the exact fields that Content Health should validate for each collection type.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          style={primaryButtonStyle(saving)}
+        >
+          {saving ? 'Saving…' : 'Save settings'}
+        </button>
+      </div>
+
+      <div style={cardStyle(24)}>
+        <SectionTitle
+          title="Global Threshold"
+          description="This value is used for every collection type that has stale draft checks enabled."
+        />
+
+        <div style={{ display: 'grid', gap: 12, marginTop: 24 }}>
+          <div style={{ color: colors.foreground, fontSize: 14, fontWeight: 600 }}>
+            Stale draft threshold
+          </div>
+          <input
+            type="number"
+            min={1}
+            value={staleDraftDays}
+            onChange={(event) => setStaleDraftDays(Number.parseInt(event.target.value, 10) || 1)}
+            style={{
+              background: colors.background,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 10,
+              color: colors.foreground,
+              fontSize: 14,
+              height: 42,
+              maxWidth: 240,
+              padding: '0 12px',
+            }}
+          />
+          <p style={{ color: colors.muted, fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+            Drafts older than this number of days will be reported as stale.
+          </p>
+        </div>
+      </div>
+
+      <div style={cardStyle(24)}>
         <SectionTitle
           title="Analysis Scope"
-          description="Choose what Content Health should analyze in this Plank instance."
+          description="Choose which collection types participate in Content Health and add the fields that should be checked."
         />
 
-        <div className="mt-6 space-y-6">
-          <div className="space-y-3">
-            <div className="text-sm font-medium text-foreground">Collection types</div>
-            <div className="grid gap-3 md:grid-cols-2">
-              {collectionTypes.length > 0 ? collectionTypes.map((contentType) => (
-                <label
-                  key={contentType.slug}
-                  className="flex items-start gap-3 rounded-lg border bg-background px-4 py-4"
-                >
-                  <input
-                    type="checkbox"
-                    className="mt-1 size-4 accent-white"
-                    checked={selectedTypes.includes(contentType.slug)}
-                    onChange={(event) => toggleContentType(contentType.slug, event.target.checked)}
-                  />
-                  <div>
-                    <div className="font-medium text-foreground">{contentType.name}</div>
-                    <div className="text-xs text-muted-foreground">{contentType.slug}</div>
+        <div style={{ display: 'grid', gap: 16, marginTop: 24 }}>
+          <div style={{ display: 'grid', gap: 10 }}>
+            <p style={{ ...smallLabelStyle(), margin: 0 }}>Enabled collection types</p>
+            {configuredTypes.length > 0 ? (
+              <div
+                style={{
+                  display: 'grid',
+                  gap: 8,
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                }}
+              >
+                {configuredTypes.map((contentType) => {
+                  const definition = collectionTypes.find((item) => item.slug === contentType.slug)
+                  return (
+                    <div
+                      key={contentType.slug}
+                      style={{
+                        alignItems: 'center',
+                        border: `1px solid ${colors.border}`,
+                        borderRadius: 10,
+                        color: colors.foreground,
+                        display: 'flex',
+                        gap: 10,
+                        minHeight: 44,
+                        padding: '10px 12px',
+                      }}
+                    >
+                      <span style={{ flex: 1, fontSize: 14, fontWeight: 600 }}>
+                        {definition?.name ?? humanize(contentType.slug)}
+                      </span>
+                      <span style={{ color: colors.muted, fontSize: 12 }}>{contentType.slug}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeContentType(contentType.slug)}
+                        style={miniActionButtonStyle()}
+                      >
+                        −
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: `1px dashed ${colors.border}`,
+                  borderRadius: 10,
+                  color: colors.muted,
+                  fontSize: 14,
+                  padding: '12px 14px',
+                }}
+              >
+                No collection types enabled yet.
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gap: 10 }}>
+            <p style={{ ...smallLabelStyle(), margin: 0 }}>Available collection types</p>
+            <div
+              style={{
+                display: 'grid',
+                gap: 8,
+                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+              }}
+            >
+              {collectionTypes
+                .filter((contentType) => !configuredMap.has(contentType.slug))
+                .map((contentType) => (
+                  <div
+                    key={contentType.slug}
+                    style={{
+                      alignItems: 'center',
+                      border: `1px dashed ${colors.border}`,
+                      borderRadius: 10,
+                      color: colors.muted,
+                      display: 'flex',
+                      gap: 10,
+                      minHeight: 44,
+                      padding: '10px 12px',
+                    }}
+                  >
+                    <span style={{ flex: 1, fontSize: 14 }}>{contentType.name}</span>
+                    <span style={{ fontSize: 12 }}>{contentType.slug}</span>
+                    <button
+                      type="button"
+                      onClick={() => addContentType(contentType.slug)}
+                      style={miniActionButtonStyle()}
+                    >
+                      +
+                    </button>
                   </div>
-                </label>
-              )) : (
-                <div className="rounded-lg border bg-background px-4 py-4 text-sm text-muted-foreground">
-                  No collection types available.
-                </div>
-              )}
+                ))}
             </div>
           </div>
-
-          <div className="space-y-3">
-            <div className="text-sm font-medium text-foreground">Stale draft threshold</div>
-            <input
-              type="number"
-              min={1}
-              value={staleDraftDays}
-              onChange={(event) => setStaleDraftDays(Number.parseInt(event.target.value, 10) || 1)}
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm text-foreground outline-none ring-0 md:max-w-xs"
-            />
-            <p className="text-sm text-muted-foreground">
-              Drafts older than this number of days will be reported as stale.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-6 flex justify-end">
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={saving}
-            className="inline-flex h-10 items-center rounded-md border px-4 text-sm font-medium text-foreground transition-opacity disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Save settings'}
-          </button>
         </div>
       </div>
 
-      <div className="rounded-xl border bg-background p-6">
-        <SectionTitle
-          title="Enabled Checks"
-          description={definition.description}
-        />
+      {configuredTypes.map((contentTypeConfig) => {
+        const contentType = collectionTypes.find((item) => item.slug === contentTypeConfig.slug)
+        const fields = contentType?.fields ?? []
+        const textFields = fields.filter((field) => TEXT_FIELD_TYPES.has(field.type))
+        const mediaFields = fields.filter((field) => MEDIA_FIELD_TYPES.has(field.type))
+        const relationFields = fields.filter((field) => RELATION_FIELD_TYPES.has(field.type))
 
-        <div className="mt-6 grid gap-3">
-          {definition.checks.map((check) => (
-            <div key={check.id} className="rounded-lg border bg-background px-4 py-4">
-              <div className="font-medium text-foreground">{check.label}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{check.description}</div>
-              <div className="mt-3 text-xs text-muted-foreground">{check.id}</div>
+        return (
+          <div key={contentTypeConfig.slug} style={cardStyle(24)}>
+            <div
+              style={{
+                alignItems: 'flex-start',
+                display: 'flex',
+                gap: 24,
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ display: 'grid', gap: 6 }}>
+                <h3 style={{ color: colors.foreground, fontSize: 20, fontWeight: 600, margin: 0 }}>
+                  {contentType?.name ?? humanize(contentTypeConfig.slug)}
+                </h3>
+                <p style={{ color: colors.muted, fontSize: 14, margin: 0 }}>
+                  {contentTypeConfig.slug}
+                </p>
+              </div>
+
+              <div style={{ alignItems: 'center', display: 'flex', gap: 12 }}>
+                <span style={{ color: colors.muted, fontSize: 14 }}>Check stale drafts</span>
+                <ToggleSwitch
+                  checked={contentTypeConfig.checkStaleDrafts}
+                  onChange={(next) =>
+                    patchContentType(contentTypeConfig.slug, (current) => ({
+                      ...current,
+                      checkStaleDrafts: next,
+                    }))
+                  }
+                />
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
+
+            <div style={{ display: 'grid', gap: 24, marginTop: 24 }}>
+              <FieldBucket
+                label="Required text fields"
+                fields={textFields}
+                configured={contentTypeConfig.requiredTextFields}
+                onAdd={(fieldName) => addField(contentTypeConfig.slug, 'requiredTextFields', fieldName)}
+                onRemove={(fieldName) =>
+                  removeField(contentTypeConfig.slug, 'requiredTextFields', fieldName)
+                }
+              />
+
+              <FieldBucket
+                label="Required media fields"
+                fields={mediaFields}
+                configured={contentTypeConfig.requiredMediaFields}
+                onAdd={(fieldName) => addField(contentTypeConfig.slug, 'requiredMediaFields', fieldName)}
+                onRemove={(fieldName) =>
+                  removeField(contentTypeConfig.slug, 'requiredMediaFields', fieldName)
+                }
+              />
+
+              <FieldBucket
+                label="Relation fields to validate"
+                fields={relationFields}
+                configured={contentTypeConfig.relationFields}
+                onAdd={(fieldName) => addField(contentTypeConfig.slug, 'relationFields', fieldName)}
+                onRemove={(fieldName) =>
+                  removeField(contentTypeConfig.slug, 'relationFields', fieldName)
+                }
+              />
+            </div>
+          </div>
+        )
+      })}
+
     </div>
   )
 }
@@ -228,4 +759,3 @@ const runtimeModule: AdminAddonRuntimeModule = {
 
 window.PlankAddonAdminModules = window.PlankAddonAdminModules ?? {}
 window.PlankAddonAdminModules['content-health'] = runtimeModule
-

@@ -1,32 +1,41 @@
+export type ContentHealthContentTypeConfig = {
+  slug: string
+  enabled: boolean
+  requiredTextFields: string[]
+  requiredMediaFields: string[]
+  relationFields: string[]
+  checkStaleDrafts: boolean
+}
+
 export type ContentHealthSettings = {
-  contentTypeSlugs: string[]
+  contentTypes: ContentHealthContentTypeConfig[]
   staleDraftDays: number
 }
 
 export const defaultSettings: ContentHealthSettings = {
-  contentTypeSlugs: [],
+  contentTypes: [],
   staleDraftDays: 30,
 }
 
 export const defaultChecks = [
   {
-    id: 'missing-descriptions',
-    label: 'Entries missing descriptions',
-    description: 'Detects entries that have no value in the inferred description field.',
+    id: 'missing-required-text',
+    label: 'Missing required text fields',
+    description: 'Detects entries missing any configured text or descriptive fields.',
   },
   {
     id: 'broken-relations',
     label: 'Broken relations',
-    description: 'Detects relation fields that point to non-existing records.',
+    description: 'Detects configured relation fields that point to missing records.',
   },
   {
     id: 'stale-drafts',
     label: 'Stale drafts',
-    description: 'Detects draft entries not updated in the configured time window.',
+    description: 'Detects drafts not updated within the configured time window.',
   },
   {
-    id: 'missing-covers',
-    label: 'Entries missing covers',
-    description: 'Detects entries without a value in the inferred cover field.',
+    id: 'missing-required-media',
+    label: 'Missing required media fields',
+    description: 'Detects entries missing any configured media or cover-like fields.',
   },
 ] as const
