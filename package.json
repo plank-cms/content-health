@@ -35,13 +35,13 @@
     "url": "https://alemartir.com"
   },
   "license": "MIT",
-  "homepage": "https://github.com/plank-cms/addon-content-health#readme",
+  "homepage": "https://github.com/plank-cms/content-health#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/plank-cms/addon-content-health.git"
+    "url": "git+https://github.com/plank-cms/content-health.git"
   },
   "bugs": {
-    "url": "https://github.com/plank-cms/addon-content-health/issues"
+    "url": "https://github.com/plank-cms/content-health/issues"
   },
   "keywords": [
     "cms",
