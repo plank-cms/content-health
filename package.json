@@ -17,6 +17,10 @@
     "./admin": {
       "import": "./dist/admin.js",
       "types": "./dist/admin.d.ts"
+    },
+    "./server": {
+      "import": "./dist/server.js",
+      "types": "./dist/server.d.ts"
     }
   },
   "files": [
