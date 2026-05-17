@@ -94,6 +94,10 @@ type ContentHealthReport = {
     items: MissingRequiredTextItem[]
     total: number
   }
+  missingRequiredMedia: {
+    items: MissingRequiredTextItem[]
+    total: number
+  }
 }
 
 declare global {
@@ -501,6 +505,7 @@ function DashboardPage({ runAction, settings }: AdminAddonRuntimeProps) {
 
   const staleDraftItems = report?.staleDrafts.items ?? []
   const missingRequiredTextItems = report?.missingRequiredText.items ?? []
+  const missingRequiredMediaItems = report?.missingRequiredMedia.items ?? []
 
   return (
     <div style={{ display: 'grid', gap: 24 }}>
@@ -694,6 +699,140 @@ function DashboardPage({ runAction, settings }: AdminAddonRuntimeProps) {
                 <tbody>
                   {missingRequiredTextItems.map((item) => (
                     <tr key={`${item.contentTypeSlug}:${item.entryId}:missing-text`}>
+                      <td style={tableCellStyle()}>
+                        <a
+                          href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}
+                          style={{
+                            color: colors.foreground,
+                            fontSize: 14,
+                            fontWeight: 600,
+                            textDecoration: 'none',
+                          }}
+                        >
+                          {item.entryLabel}
+                        </a>
+                      </td>
+                      <td style={tableCellStyle()}>
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          <span style={{ fontWeight: 600 }}>{item.contentTypeName}</span>
+                          <span style={{ color: colors.muted, fontSize: 12 }}>{item.contentTypeSlug}</span>
+                        </div>
+                      </td>
+                      <td style={tableCellStyle()}>
+                        <span style={{ color: colors.warningText, fontSize: 13 }}>
+                          {item.missingFields.map(humanize).join(', ')}
+                        </span>
+                      </td>
+                      <td style={tableCellStyle()}>
+                        <span style={{ color: colors.muted }}>{formatDateTime(item.updatedAt)}</span>
+                      </td>
+                      <td style={tableCellStyle('center')}>
+                        <div
+                          title={item.authorName}
+                          style={{
+                            alignItems: 'center',
+                            display: 'inline-flex',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {item.authorAvatarUrl ? (
+                            <img
+                              src={item.authorAvatarUrl}
+                              alt={item.authorName}
+                              style={{
+                                borderRadius: 999,
+                                display: 'block',
+                                height: 30,
+                                objectFit: 'cover',
+                                width: 30,
+                              }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                alignItems: 'center',
+                                background: colors.input,
+                                borderRadius: 999,
+                                color: colors.foreground,
+                                display: 'inline-flex',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                height: 30,
+                                justifyContent: 'center',
+                                width: 30,
+                              }}
+                            >
+                              {getAuthorInitials(item.authorName)}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={cardStyle(24)}>
+        <div
+          style={{
+            alignItems: 'center',
+            borderBottom: `1px solid ${colors.border}`,
+            display: 'flex',
+            gap: 16,
+            justifyContent: 'space-between',
+            margin: '-24px -24px 0',
+            padding: '20px 24px',
+          }}
+        >
+          <SectionTitle
+            title="Missing Required Media"
+            description="Review entries missing one or more configured media fields across the monitored collection types."
+          />
+          <div
+            style={{
+              alignSelf: 'flex-start',
+              color: colors.foreground,
+              fontSize: 16,
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {loading ? '...' : `${missingRequiredMediaItems.length} issues`}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 24 }}>
+          {loading ? (
+            <div style={{ color: colors.muted, fontSize: 14 }}>Loading missing media...</div>
+          ) : missingRequiredMediaItems.length === 0 ? (
+            <div style={{ color: colors.muted, fontSize: 14 }}>
+              No entries are currently missing configured media fields.
+            </div>
+          ) : (
+            <div
+              style={{
+                border: `1px solid ${colors.border}`,
+                borderRadius: 14,
+                overflow: 'hidden',
+              }}
+            >
+              <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Entry</th>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Collection Type</th>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Missing Fields</th>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Last Updated</th>
+                    <th style={{ ...tableCellStyle('center'), ...smallLabelStyle(), borderTop: 'none' }}>Author</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {missingRequiredMediaItems.map((item) => (
+                    <tr key={`${item.contentTypeSlug}:${item.entryId}:missing-media`}>
                       <td style={tableCellStyle()}>
                         <a
                           href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}

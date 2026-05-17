@@ -59,6 +59,19 @@ type ContentHealthReport = {
     }>
     total: number
   }
+  missingRequiredMedia: {
+    items: Array<{
+      authorAvatarUrl: string | null
+      authorName: string
+      contentTypeName: string
+      contentTypeSlug: string
+      entryId: string
+      entryLabel: string
+      missingFields: string[]
+      updatedAt: string
+    }>
+    total: number
+  }
 }
 
 type EntryRow = Record<string, unknown> & {
@@ -119,6 +132,9 @@ async function buildReport(
   )
   const missingRequiredTextTargets = settings.contentTypes.filter(
     (contentType) => contentType.enabled && contentType.requiredTextFields.length > 0,
+  )
+  const missingRequiredMediaTargets = settings.contentTypes.filter(
+    (contentType) => contentType.enabled && contentType.requiredMediaFields.length > 0,
   )
 
   const staleDraftGroups = await Promise.all(
@@ -207,8 +223,57 @@ async function buildReport(
     }),
   )
 
+  const missingRequiredMediaGroups = await Promise.all(
+    missingRequiredMediaTargets.map(async (configuredType) => {
+      const contentType = contentTypes.find((item) => item.slug === configuredType.slug)
+      if (!contentType?.tableName) {
+        return [] as ContentHealthReport['missingRequiredMedia']['items']
+      }
+
+      const quotedTableName = context.quoteIdentifier(contentType.tableName)
+      const { rows } = await context.db.query(
+        `SELECT
+           e.*,
+           u.first_name AS _author_first_name,
+           u.last_name AS _author_last_name,
+           u.avatar_url AS _author_avatar_url
+         FROM ${quotedTableName} e
+         LEFT JOIN plank_users u ON u.id = e.created_by`,
+      )
+
+      return (rows as EntryRow[])
+        .map((row) => {
+          const missingFields = configuredType.requiredMediaFields.filter((fieldName) =>
+            isMissingMediaValue(row[fieldName]),
+          )
+
+          if (missingFields.length === 0) return null
+
+          return {
+            authorAvatarUrl: row._author_avatar_url,
+            authorName: getAuthorName(row),
+            contentTypeName: contentType.name,
+            contentTypeSlug: contentType.slug,
+            entryId: row.id,
+            entryLabel: getEntryLabel(row, contentType, configuredType),
+            missingFields,
+            updatedAt: row.updated_at,
+          }
+        })
+        .filter(
+          (
+            value,
+          ): value is ContentHealthReport['missingRequiredMedia']['items'][number] => value !== null,
+        )
+        .sort(
+          (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+        )
+    }),
+  )
+
   const staleDraftItems = staleDraftGroups.flat()
   const missingRequiredTextItems = missingRequiredTextGroups.flat()
+  const missingRequiredMediaItems = missingRequiredMediaGroups.flat()
 
   return {
     staleDrafts: {
@@ -218,6 +283,10 @@ async function buildReport(
     missingRequiredText: {
       items: missingRequiredTextItems,
       total: missingRequiredTextItems.length,
+    },
+    missingRequiredMedia: {
+      items: missingRequiredMediaItems,
+      total: missingRequiredMediaItems.length,
     },
   }
 }
@@ -271,6 +340,15 @@ function isMissingTextValue(value: unknown): boolean {
   if (value === null || value === undefined) return true
   if (typeof value === 'string') return value.trim().length === 0
   if (Array.isArray(value)) return value.length === 0
+  return false
+}
+
+function isMissingMediaValue(value: unknown): boolean {
+  if (value === null || value === undefined) return true
+  if (typeof value === 'string') return value.trim().length === 0
+  if (Array.isArray(value)) {
+    return value.filter((item) => String(item ?? '').trim().length > 0).length === 0
+  }
   return false
 }
 
