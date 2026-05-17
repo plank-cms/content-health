@@ -4,7 +4,7 @@ Official Plank add-on for tracking content quality issues across selected collec
 
 ## Requirements
 
-- Plank `>=0.28.0 <1.0.0`
+- Plank CMS `>=0.28.0 <1.0.0`
 
 ## Installation
 
