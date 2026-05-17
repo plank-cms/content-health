@@ -1,23 +1,39 @@
-# @plank-cms/addon-content-health
+# Plank Content Health (add-on)
 
-Official Plank add-on for content health insights.
+Official Plank add-on for tracking content quality issues across selected collection types.
 
-## Registry
+## Requirements
 
-This package is configured for the local Gitea npm registry:
+- Plank `>=0.28.0 <1.0.0`
 
-- `http://localhost:4000/api/packages/martirale/npm/`
+## Installation
 
-Set a token before publishing or installing:
-
-```bash
-export GITEA_NPM_TOKEN=your_token
-```
-
-## Commands
+Install the add-on in your Plank project:
 
 ```bash
-pnpm install
-pnpm build
-pnpm publish --no-git-checks
+pnpm add @plank-cms/addon-content-health
 ```
+
+Restart Plank after installing the package so the add-on can be discovered and registered.
+
+## Enable The Add-on
+
+Once your instance is running:
+
+1. Open `Admin > Add-ons`
+2. Enable `Content Health`
+3. Open the add-on and configure the collection types you want to monitor
+
+## What It Does
+
+Content Health currently helps you track:
+
+- stale drafts
+- missing required text fields
+- missing required media fields
+
+The add-on provides:
+
+- a `Dashboard` tab with findings and metrics
+- an `Admin` tab for configuration
+- contextual indicators in `Entries`
