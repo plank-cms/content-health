@@ -31,7 +31,7 @@ export const manifest = {
   id: "content-health",
   packageName: "@plank-cms/addon-content-health",
   name: "Content Health",
-  version: "0.1.0",
+  version: "0.1.1",
   plankRange: ">=0.28.0 <1.0.0",
   description:
     "Official Plank add-on that surfaces content quality issues across selected collection types.",

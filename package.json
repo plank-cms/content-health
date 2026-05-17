@@ -28,7 +28,8 @@
   ],
   "scripts": {
     "build": "pnpm clean && tsc && vite build --config vite.admin.config.ts",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "version:bump": "node scripts/bump-version.mjs"
   },
   "author": {
     "name": "Alejandro Mártir",
