@@ -225,6 +225,127 @@ function tableCellStyle(align: 'left' | 'center' | 'right' = 'left'): React.CSSP
   }
 }
 
+function Tooltip({
+  children,
+  content,
+}: {
+  children: React.ReactNode
+  content: React.ReactNode
+}) {
+  const [open, setOpen] = React.useState(false)
+
+  return (
+    <span
+      onBlur={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      style={{
+        display: 'inline-flex',
+        position: 'relative',
+      }}
+      tabIndex={0}
+    >
+      {children}
+      {open ? (
+        <span
+          role="tooltip"
+          style={{
+            background: colors.foreground,
+            borderRadius: 8,
+            bottom: 'calc(100% + 10px)',
+            color: colors.background,
+            fontSize: 12,
+            fontWeight: 500,
+            left: '50%',
+            maxWidth: 220,
+            padding: '8px 10px',
+            pointerEvents: 'none',
+            position: 'absolute',
+            transform: 'translateX(-50%)',
+            whiteSpace: 'nowrap',
+            zIndex: 40,
+          }}
+        >
+          {content}
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
+function AdminLink({
+  children,
+  href,
+}: {
+  children: React.ReactNode
+  href: string
+}) {
+  const [hovered, setHovered] = React.useState(false)
+
+  return (
+    <a
+      href={href}
+      onBlur={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        color: colors.foreground,
+        fontSize: 14,
+        fontWeight: 600,
+        textDecoration: hovered ? 'underline' : 'none',
+        textUnderlineOffset: 3,
+      }}
+    >
+      {children}
+    </a>
+  )
+}
+
+function AuthorAvatar({
+  authorAvatarUrl,
+  authorName,
+}: {
+  authorAvatarUrl: string | null
+  authorName: string
+}) {
+  return (
+    <Tooltip content={authorName}>
+      {authorAvatarUrl ? (
+        <img
+          src={authorAvatarUrl}
+          alt={authorName}
+          style={{
+            borderRadius: 999,
+            display: 'block',
+            height: 30,
+            objectFit: 'cover',
+            width: 30,
+          }}
+        />
+      ) : (
+        <div
+          style={{
+            alignItems: 'center',
+            background: colors.input,
+            borderRadius: 999,
+            color: colors.foreground,
+            display: 'inline-flex',
+            fontSize: 11,
+            fontWeight: 700,
+            height: 30,
+            justifyContent: 'center',
+            width: 30,
+          }}
+        >
+          {getAuthorInitials(authorName)}
+        </div>
+      )}
+    </Tooltip>
+  )
+}
+
 function StatCard({
   hint,
   label,
@@ -567,17 +688,9 @@ function DashboardPage({ runAction, settings }: AdminAddonRuntimeProps) {
                     <tr key={`${item.contentTypeSlug}:${item.entryId}`}>
                       <td style={tableCellStyle()}>
                         <div style={{ display: 'grid', gap: 4 }}>
-                          <a
-                            href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}
-                            style={{
-                              color: colors.foreground,
-                              fontSize: 14,
-                              fontWeight: 600,
-                              textDecoration: 'none',
-                            }}
-                          >
+                          <AdminLink href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}>
                             {item.entryLabel}
-                          </a>
+                          </AdminLink>
                           <span style={{ color: colors.warningText, fontSize: 12 }}>
                             Stale for {item.staleDays} {item.staleDays === 1 ? 'day' : 'days'}
                           </span>
@@ -593,45 +706,10 @@ function DashboardPage({ runAction, settings }: AdminAddonRuntimeProps) {
                         <span style={{ color: colors.muted }}>{formatDateTime(item.updatedAt)}</span>
                       </td>
                       <td style={tableCellStyle('center')}>
-                        <div
-                          title={item.authorName}
-                          style={{
-                            alignItems: 'center',
-                            display: 'inline-flex',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          {item.authorAvatarUrl ? (
-                            <img
-                              src={item.authorAvatarUrl}
-                              alt={item.authorName}
-                              style={{
-                                borderRadius: 999,
-                                display: 'block',
-                                height: 30,
-                                objectFit: 'cover',
-                                width: 30,
-                              }}
-                            />
-                          ) : (
-                            <div
-                              style={{
-                                alignItems: 'center',
-                                background: colors.input,
-                                borderRadius: 999,
-                                color: colors.foreground,
-                                display: 'inline-flex',
-                                fontSize: 11,
-                                fontWeight: 700,
-                                height: 30,
-                                justifyContent: 'center',
-                                width: 30,
-                              }}
-                            >
-                              {getAuthorInitials(item.authorName)}
-                            </div>
-                          )}
-                        </div>
+                        <AuthorAvatar
+                          authorAvatarUrl={item.authorAvatarUrl}
+                          authorName={item.authorName}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -700,17 +778,9 @@ function DashboardPage({ runAction, settings }: AdminAddonRuntimeProps) {
                   {missingRequiredTextItems.map((item) => (
                     <tr key={`${item.contentTypeSlug}:${item.entryId}:missing-text`}>
                       <td style={tableCellStyle()}>
-                        <a
-                          href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}
-                          style={{
-                            color: colors.foreground,
-                            fontSize: 14,
-                            fontWeight: 600,
-                            textDecoration: 'none',
-                          }}
-                        >
+                        <AdminLink href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}>
                           {item.entryLabel}
-                        </a>
+                        </AdminLink>
                       </td>
                       <td style={tableCellStyle()}>
                         <div style={{ display: 'grid', gap: 4 }}>
@@ -727,45 +797,10 @@ function DashboardPage({ runAction, settings }: AdminAddonRuntimeProps) {
                         <span style={{ color: colors.muted }}>{formatDateTime(item.updatedAt)}</span>
                       </td>
                       <td style={tableCellStyle('center')}>
-                        <div
-                          title={item.authorName}
-                          style={{
-                            alignItems: 'center',
-                            display: 'inline-flex',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          {item.authorAvatarUrl ? (
-                            <img
-                              src={item.authorAvatarUrl}
-                              alt={item.authorName}
-                              style={{
-                                borderRadius: 999,
-                                display: 'block',
-                                height: 30,
-                                objectFit: 'cover',
-                                width: 30,
-                              }}
-                            />
-                          ) : (
-                            <div
-                              style={{
-                                alignItems: 'center',
-                                background: colors.input,
-                                borderRadius: 999,
-                                color: colors.foreground,
-                                display: 'inline-flex',
-                                fontSize: 11,
-                                fontWeight: 700,
-                                height: 30,
-                                justifyContent: 'center',
-                                width: 30,
-                              }}
-                            >
-                              {getAuthorInitials(item.authorName)}
-                            </div>
-                          )}
-                        </div>
+                        <AuthorAvatar
+                          authorAvatarUrl={item.authorAvatarUrl}
+                          authorName={item.authorName}
+                        />
                       </td>
                     </tr>
                   ))}
@@ -834,17 +869,9 @@ function DashboardPage({ runAction, settings }: AdminAddonRuntimeProps) {
                   {missingRequiredMediaItems.map((item) => (
                     <tr key={`${item.contentTypeSlug}:${item.entryId}:missing-media`}>
                       <td style={tableCellStyle()}>
-                        <a
-                          href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}
-                          style={{
-                            color: colors.foreground,
-                            fontSize: 14,
-                            fontWeight: 600,
-                            textDecoration: 'none',
-                          }}
-                        >
+                        <AdminLink href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}>
                           {item.entryLabel}
-                        </a>
+                        </AdminLink>
                       </td>
                       <td style={tableCellStyle()}>
                         <div style={{ display: 'grid', gap: 4 }}>
@@ -861,45 +888,10 @@ function DashboardPage({ runAction, settings }: AdminAddonRuntimeProps) {
                         <span style={{ color: colors.muted }}>{formatDateTime(item.updatedAt)}</span>
                       </td>
                       <td style={tableCellStyle('center')}>
-                        <div
-                          title={item.authorName}
-                          style={{
-                            alignItems: 'center',
-                            display: 'inline-flex',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          {item.authorAvatarUrl ? (
-                            <img
-                              src={item.authorAvatarUrl}
-                              alt={item.authorName}
-                              style={{
-                                borderRadius: 999,
-                                display: 'block',
-                                height: 30,
-                                objectFit: 'cover',
-                                width: 30,
-                              }}
-                            />
-                          ) : (
-                            <div
-                              style={{
-                                alignItems: 'center',
-                                background: colors.input,
-                                borderRadius: 999,
-                                color: colors.foreground,
-                                display: 'inline-flex',
-                                fontSize: 11,
-                                fontWeight: 700,
-                                height: 30,
-                                justifyContent: 'center',
-                                width: 30,
-                              }}
-                            >
-                              {getAuthorInitials(item.authorName)}
-                            </div>
-                          )}
-                        </div>
+                        <AuthorAvatar
+                          authorAvatarUrl={item.authorAvatarUrl}
+                          authorName={item.authorName}
+                        />
                       </td>
                     </tr>
                   ))}

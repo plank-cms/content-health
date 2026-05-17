@@ -14,6 +14,9 @@ type ContentHealthServerContext = {
   db: {
     query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>
   }
+  media: {
+    getUrl: (key: string) => Promise<string>
+  }
   getSettings: (namespace: string) => Promise<Record<string, string>>
   findAllContentTypes: () => Promise<ContentType[]>
   quoteIdentifier: (value: string) => string
@@ -158,9 +161,9 @@ async function buildReport(
         [settings.staleDraftDays],
       )
 
-      return (rows as EntryRow[])
-        .map((row) => ({
-          authorAvatarUrl: row._author_avatar_url,
+      const items = await Promise.all(
+        (rows as EntryRow[]).map(async (row) => ({
+          authorAvatarUrl: await resolveAvatarUrl(row._author_avatar_url, context),
           authorName: getAuthorName(row),
           contentTypeName: contentType.name,
           contentTypeSlug: contentType.slug,
@@ -168,10 +171,12 @@ async function buildReport(
           entryLabel: getEntryLabel(row, contentType, configuredType),
           staleDays: getAgeInDays(row.updated_at),
           updatedAt: row.updated_at,
-        }))
-        .sort(
+        })),
+      )
+
+      return items.sort(
           (left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime(),
-        )
+      )
     }),
   )
 
@@ -193,8 +198,8 @@ async function buildReport(
          LEFT JOIN plank_users u ON u.id = e.created_by`,
       )
 
-      return (rows as EntryRow[])
-        .map((row) => {
+      const items = await Promise.all(
+        (rows as EntryRow[]).map(async (row) => {
           const missingFields = configuredType.requiredTextFields.filter((fieldName) =>
             isMissingTextValue(row[fieldName]),
           )
@@ -202,7 +207,7 @@ async function buildReport(
           if (missingFields.length === 0) return null
 
           return {
-            authorAvatarUrl: row._author_avatar_url,
+            authorAvatarUrl: await resolveAvatarUrl(row._author_avatar_url, context),
             authorName: getAuthorName(row),
             contentTypeName: contentType.name,
             contentTypeSlug: contentType.slug,
@@ -211,7 +216,10 @@ async function buildReport(
             missingFields,
             updatedAt: row.updated_at,
           }
-        })
+        }),
+      )
+
+      return items
         .filter(
           (
             value,
@@ -241,8 +249,8 @@ async function buildReport(
          LEFT JOIN plank_users u ON u.id = e.created_by`,
       )
 
-      return (rows as EntryRow[])
-        .map((row) => {
+      const items = await Promise.all(
+        (rows as EntryRow[]).map(async (row) => {
           const missingFields = configuredType.requiredMediaFields.filter((fieldName) =>
             isMissingMediaValue(row[fieldName]),
           )
@@ -250,7 +258,7 @@ async function buildReport(
           if (missingFields.length === 0) return null
 
           return {
-            authorAvatarUrl: row._author_avatar_url,
+            authorAvatarUrl: await resolveAvatarUrl(row._author_avatar_url, context),
             authorName: getAuthorName(row),
             contentTypeName: contentType.name,
             contentTypeSlug: contentType.slug,
@@ -259,7 +267,10 @@ async function buildReport(
             missingFields,
             updatedAt: row.updated_at,
           }
-        })
+        }),
+      )
+
+      return items
         .filter(
           (
             value,
@@ -288,6 +299,20 @@ async function buildReport(
       items: missingRequiredMediaItems,
       total: missingRequiredMediaItems.length,
     },
+  }
+}
+
+async function resolveAvatarUrl(
+  value: string | null,
+  context: ContentHealthServerContext,
+): Promise<string | null> {
+  if (!value) return null
+  if (value.startsWith('http')) return value
+
+  try {
+    return await context.media.getUrl(value)
+  } catch {
+    return null
   }
 }
 
