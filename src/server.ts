@@ -1,6 +1,10 @@
 import type { ContentHealthContentTypeConfig, ContentHealthSettings } from './defaults.js'
 
 type ContentType = {
+  fields?: Array<{
+    name: string
+    type: string
+  }>
   name: string
   slug: string
   tableName?: string
@@ -30,13 +34,39 @@ type ContentHealthServerModule = {
 
 type ContentHealthReport = {
   staleDrafts: {
-    byContentType: Array<{
-      count: number
-      name: string
-      slug: string
+    items: Array<{
+      authorAvatarUrl: string | null
+      authorName: string
+      contentTypeName: string
+      contentTypeSlug: string
+      entryId: string
+      entryLabel: string
+      staleDays: number
+      updatedAt: string
     }>
     total: number
   }
+  missingRequiredText: {
+    items: Array<{
+      authorAvatarUrl: string | null
+      authorName: string
+      contentTypeName: string
+      contentTypeSlug: string
+      entryId: string
+      entryLabel: string
+      missingFields: string[]
+      updatedAt: string
+    }>
+    total: number
+  }
+}
+
+type EntryRow = Record<string, unknown> & {
+  id: string
+  updated_at: string
+  _author_avatar_url: string | null
+  _author_first_name: string | null
+  _author_last_name: string | null
 }
 
 function parseSettings(settings: Record<string, string>): ContentHealthSettings {
@@ -87,41 +117,161 @@ async function buildReport(
   const staleDraftTargets = settings.contentTypes.filter(
     (contentType) => contentType.enabled && contentType.checkStaleDrafts,
   )
+  const missingRequiredTextTargets = settings.contentTypes.filter(
+    (contentType) => contentType.enabled && contentType.requiredTextFields.length > 0,
+  )
 
-  const byContentType = await Promise.all(
+  const staleDraftGroups = await Promise.all(
     staleDraftTargets.map(async (configuredType) => {
       const contentType = contentTypes.find((item) => item.slug === configuredType.slug)
       if (!contentType?.tableName) {
-        return {
-          count: 0,
-          name: contentType?.name ?? configuredType.slug,
-          slug: configuredType.slug,
-        }
+        return [] as ContentHealthReport['staleDrafts']['items']
       }
 
       const quotedTableName = context.quoteIdentifier(contentType.tableName)
       const { rows } = await context.db.query(
-        `SELECT COUNT(*)::int AS count
-         FROM ${quotedTableName}
-         WHERE status = 'draft'
-           AND updated_at < NOW() - ($1::int * INTERVAL '1 day')`,
+        `SELECT
+           e.*,
+           u.first_name AS _author_first_name,
+           u.last_name AS _author_last_name,
+           u.avatar_url AS _author_avatar_url
+         FROM ${quotedTableName} e
+         LEFT JOIN plank_users u ON u.id = e.created_by
+         WHERE e.status = 'draft'
+           AND e.updated_at < NOW() - ($1::int * INTERVAL '1 day')`,
         [settings.staleDraftDays],
       )
 
-      return {
-        count: Number(rows[0]?.count ?? 0),
-        name: contentType.name,
-        slug: contentType.slug,
-      }
+      return (rows as EntryRow[])
+        .map((row) => ({
+          authorAvatarUrl: row._author_avatar_url,
+          authorName: getAuthorName(row),
+          contentTypeName: contentType.name,
+          contentTypeSlug: contentType.slug,
+          entryId: row.id,
+          entryLabel: getEntryLabel(row, contentType, configuredType),
+          staleDays: getAgeInDays(row.updated_at),
+          updatedAt: row.updated_at,
+        }))
+        .sort(
+          (left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime(),
+        )
     }),
   )
 
+  const missingRequiredTextGroups = await Promise.all(
+    missingRequiredTextTargets.map(async (configuredType) => {
+      const contentType = contentTypes.find((item) => item.slug === configuredType.slug)
+      if (!contentType?.tableName) {
+        return [] as ContentHealthReport['missingRequiredText']['items']
+      }
+
+      const quotedTableName = context.quoteIdentifier(contentType.tableName)
+      const { rows } = await context.db.query(
+        `SELECT
+           e.*,
+           u.first_name AS _author_first_name,
+           u.last_name AS _author_last_name,
+           u.avatar_url AS _author_avatar_url
+         FROM ${quotedTableName} e
+         LEFT JOIN plank_users u ON u.id = e.created_by`,
+      )
+
+      return (rows as EntryRow[])
+        .map((row) => {
+          const missingFields = configuredType.requiredTextFields.filter((fieldName) =>
+            isMissingTextValue(row[fieldName]),
+          )
+
+          if (missingFields.length === 0) return null
+
+          return {
+            authorAvatarUrl: row._author_avatar_url,
+            authorName: getAuthorName(row),
+            contentTypeName: contentType.name,
+            contentTypeSlug: contentType.slug,
+            entryId: row.id,
+            entryLabel: getEntryLabel(row, contentType, configuredType),
+            missingFields,
+            updatedAt: row.updated_at,
+          }
+        })
+        .filter(
+          (
+            value,
+          ): value is ContentHealthReport['missingRequiredText']['items'][number] => value !== null,
+        )
+        .sort(
+          (left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime(),
+        )
+    }),
+  )
+
+  const staleDraftItems = staleDraftGroups.flat()
+  const missingRequiredTextItems = missingRequiredTextGroups.flat()
+
   return {
     staleDrafts: {
-      byContentType,
-      total: byContentType.reduce((sum, item) => sum + item.count, 0),
+      items: staleDraftItems,
+      total: staleDraftItems.length,
+    },
+    missingRequiredText: {
+      items: missingRequiredTextItems,
+      total: missingRequiredTextItems.length,
     },
   }
+}
+
+function getAgeInDays(updatedAt: string): number {
+  const updated = new Date(updatedAt)
+  if (Number.isNaN(updated.getTime())) return 0
+  const diff = Date.now() - updated.getTime()
+  return Math.max(0, Math.floor(diff / 86400000))
+}
+
+function getAuthorName(row: EntryRow): string {
+  const parts = [row._author_first_name, row._author_last_name].filter(Boolean)
+  return parts.length > 0 ? parts.join(' ') : 'Unknown author'
+}
+
+function getEntryLabel(
+  row: EntryRow,
+  contentType: ContentType,
+  configuredType: ContentHealthContentTypeConfig,
+): string {
+  const fieldName = getEntryLabelField(contentType, configuredType)
+  const value = fieldName ? row[fieldName] : null
+
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return row.id
+}
+
+function getEntryLabelField(
+  contentType: ContentType,
+  configuredType: ContentHealthContentTypeConfig,
+): string | null {
+  const fields = contentType.fields ?? []
+  const direct = ['title', 'name', 'entry'].find((name) => fields.some((field) => field.name === name))
+  if (direct) return direct
+
+  const configured = configuredType.requiredTextFields.find((name) =>
+    fields.some((field) => field.name === name),
+  )
+  if (configured) return configured
+
+  const uidField = fields.find((field) => field.type === 'uid')
+  if (uidField) return uidField.name
+
+  const stringField = fields.find((field) => ['string', 'text', 'richtext'].includes(field.type))
+  return stringField?.name ?? null
+}
+
+function isMissingTextValue(value: unknown): boolean {
+  if (value === null || value === undefined) return true
+  if (typeof value === 'string') return value.trim().length === 0
+  if (Array.isArray(value)) return value.length === 0
+  return false
 }
 
 export const serverModule: ContentHealthServerModule = {

@@ -63,22 +63,6 @@ type AdminAddonRuntimeModule = {
   AdminPage?: React.ComponentType<AdminAddonRuntimeProps>
 }
 
-type Entry = Record<string, unknown> & {
-  id: string
-  status: 'draft' | 'scheduled' | 'published' | 'pending' | 'in_review'
-  updated_at: string
-  _author_first_name: string | null
-  _author_last_name: string | null
-  _author_avatar_url: string | null
-}
-
-type EntriesResponse = {
-  data: Entry[]
-  total: number
-  page: number
-  limit: number
-}
-
 type StaleDraftItem = {
   authorAvatarUrl: string | null
   authorName: string
@@ -88,6 +72,28 @@ type StaleDraftItem = {
   entryLabel: string
   staleDays: number
   updatedAt: string
+}
+
+type MissingRequiredTextItem = {
+  authorAvatarUrl: string | null
+  authorName: string
+  contentTypeName: string
+  contentTypeSlug: string
+  entryId: string
+  entryLabel: string
+  missingFields: string[]
+  updatedAt: string
+}
+
+type ContentHealthReport = {
+  staleDrafts: {
+    items: StaleDraftItem[]
+    total: number
+  }
+  missingRequiredText: {
+    items: MissingRequiredTextItem[]
+    total: number
+  }
 }
 
 declare global {
@@ -432,13 +438,6 @@ function buildEmptyConfig(slug: string): ContentHealthContentTypeConfig {
   }
 }
 
-function daysSince(value: string): number {
-  const updatedAt = new Date(value)
-  if (Number.isNaN(updatedAt.getTime())) return 0
-  const diff = Date.now() - updatedAt.getTime()
-  return Math.max(0, Math.floor(diff / 86400000))
-}
-
 function getEntryLabelField(
   contentType: ContentType,
   config?: ContentHealthContentTypeConfig,
@@ -459,24 +458,6 @@ function getEntryLabelField(
   return stringField?.name ?? null
 }
 
-function getEntryLabel(
-  entry: Entry,
-  contentType: ContentType,
-  config?: ContentHealthContentTypeConfig,
-): string {
-  const fieldName = getEntryLabelField(contentType, config)
-  const value = fieldName ? entry[fieldName] : null
-
-  if (typeof value === 'string' && value.trim()) return value.trim()
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  return entry.id
-}
-
-function getAuthorName(entry: Entry): string {
-  const parts = [entry._author_first_name, entry._author_last_name].filter(Boolean)
-  return parts.length > 0 ? parts.join(' ') : 'Unknown author'
-}
-
 function getAuthorInitials(name: string): string {
   const parts = name.split(' ').filter(Boolean)
   const initials = parts.slice(0, 2).map((part) => part[0]?.toUpperCase() ?? '')
@@ -493,97 +474,21 @@ function formatDateTime(value: string): string {
   }).format(date)
 }
 
-async function fetchEntriesPage(slug: string, page: number, limit: number): Promise<EntriesResponse> {
-  const params = new URLSearchParams({
-    page: String(page),
-    limit: String(limit),
-    status: 'draft',
-    sort: 'updated_at',
-    order: 'asc',
-  })
-
-  const response = await fetch(`/cms/admin/content-types/${slug}/entries?${params.toString()}`, {
-    credentials: 'include',
-  })
-
-  if (!response.ok) {
-    throw new Error(`Could not load drafts for ${slug}`)
-  }
-
-  return (await response.json()) as EntriesResponse
-}
-
-async function fetchDraftEntries(slug: string): Promise<Entry[]> {
-  const limit = 100
-  const firstPage = await fetchEntriesPage(slug, 1, limit)
-  const pages = Math.max(1, Math.ceil((firstPage.total ?? 0) / limit))
-  const items = [...(firstPage.data ?? [])]
-
-  if (pages === 1) return items
-
-  const rest = await Promise.all(
-    Array.from({ length: pages - 1 }, (_, index) => fetchEntriesPage(slug, index + 2, limit)),
-  )
-
-  for (const page of rest) {
-    items.push(...(page.data ?? []))
-  }
-
-  return items
-}
-
-function DashboardPage({ contentTypes, settings }: AdminAddonRuntimeProps) {
-  const parsedSettings = React.useMemo(() => parseSettings(settings), [settings])
-  const collectionTypes = React.useMemo(
-    () => contentTypes.filter((contentType) => contentType.kind === 'collection'),
-    [contentTypes],
-  )
-
-  const monitoredTypes = React.useMemo(
-    () =>
-      parsedSettings.contentTypes.filter(
-        (contentType) => contentType.enabled && contentType.checkStaleDrafts,
-      ),
-    [parsedSettings.contentTypes],
-  )
-
-  const [items, setItems] = React.useState<StaleDraftItem[]>([])
+function DashboardPage({ runAction, settings }: AdminAddonRuntimeProps) {
+  const [report, setReport] = React.useState<ContentHealthReport | null>(null)
   const [loading, setLoading] = React.useState(true)
 
   React.useEffect(() => {
     let active = true
     setLoading(true)
 
-    Promise.all(
-      monitoredTypes.map(async (configuredType) => {
-        const contentType = collectionTypes.find((item) => item.slug === configuredType.slug)
-        if (!contentType) return [] as StaleDraftItem[]
-
-        const drafts = await fetchDraftEntries(contentType.slug)
-
-        return drafts
-          .filter((entry) => daysSince(entry.updated_at) >= parsedSettings.staleDraftDays)
-          .map((entry) => ({
-            authorAvatarUrl: entry._author_avatar_url,
-            authorName: getAuthorName(entry),
-            contentTypeName: contentType.name,
-            contentTypeSlug: contentType.slug,
-            entryId: entry.id,
-            entryLabel: getEntryLabel(entry, contentType, configuredType),
-            staleDays: daysSince(entry.updated_at),
-            updatedAt: entry.updated_at,
-          }))
-      }),
-    )
-      .then((groups) => {
+    runAction<ContentHealthReport>('getReport')
+      .then((nextReport) => {
         if (!active) return
-        const nextItems = groups
-          .flat()
-          .sort((left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime())
-        setItems(nextItems)
+        setReport(nextReport)
       })
       .catch(() => {
-        if (active) setItems([])
+        if (active) setReport(null)
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -592,7 +497,10 @@ function DashboardPage({ contentTypes, settings }: AdminAddonRuntimeProps) {
     return () => {
       active = false
     }
-  }, [collectionTypes, monitoredTypes, parsedSettings.staleDraftDays])
+  }, [runAction, settings])
+
+  const staleDraftItems = report?.staleDrafts.items ?? []
+  const missingRequiredTextItems = report?.missingRequiredText.items ?? []
 
   return (
     <div style={{ display: 'grid', gap: 24 }}>
@@ -621,18 +529,14 @@ function DashboardPage({ contentTypes, settings }: AdminAddonRuntimeProps) {
               whiteSpace: 'nowrap',
             }}
           >
-            {loading ? '...' : `${items.length} stale drafts`}
+            {loading ? '...' : `${staleDraftItems.length} stale drafts`}
           </div>
         </div>
 
         <div style={{ marginTop: 24 }}>
           {loading ? (
             <div style={{ color: colors.muted, fontSize: 14 }}>Loading stale drafts...</div>
-          ) : monitoredTypes.length === 0 ? (
-            <div style={{ color: colors.muted, fontSize: 14 }}>
-              Enable stale draft checks for at least one collection type in Admin.
-            </div>
-          ) : items.length === 0 ? (
+          ) : staleDraftItems.length === 0 ? (
             <div style={{ color: colors.muted, fontSize: 14 }}>
               No stale drafts match the current threshold.
             </div>
@@ -654,7 +558,7 @@ function DashboardPage({ contentTypes, settings }: AdminAddonRuntimeProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((item) => (
+                  {staleDraftItems.map((item) => (
                     <tr key={`${item.contentTypeSlug}:${item.entryId}`}>
                       <td style={tableCellStyle()}>
                         <div style={{ display: 'grid', gap: 4 }}>
@@ -679,6 +583,140 @@ function DashboardPage({ contentTypes, settings }: AdminAddonRuntimeProps) {
                           <span style={{ fontWeight: 600 }}>{item.contentTypeName}</span>
                           <span style={{ color: colors.muted, fontSize: 12 }}>{item.contentTypeSlug}</span>
                         </div>
+                      </td>
+                      <td style={tableCellStyle()}>
+                        <span style={{ color: colors.muted }}>{formatDateTime(item.updatedAt)}</span>
+                      </td>
+                      <td style={tableCellStyle('center')}>
+                        <div
+                          title={item.authorName}
+                          style={{
+                            alignItems: 'center',
+                            display: 'inline-flex',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {item.authorAvatarUrl ? (
+                            <img
+                              src={item.authorAvatarUrl}
+                              alt={item.authorName}
+                              style={{
+                                borderRadius: 999,
+                                display: 'block',
+                                height: 30,
+                                objectFit: 'cover',
+                                width: 30,
+                              }}
+                            />
+                          ) : (
+                            <div
+                              style={{
+                                alignItems: 'center',
+                                background: colors.input,
+                                borderRadius: 999,
+                                color: colors.foreground,
+                                display: 'inline-flex',
+                                fontSize: 11,
+                                fontWeight: 700,
+                                height: 30,
+                                justifyContent: 'center',
+                                width: 30,
+                              }}
+                            >
+                              {getAuthorInitials(item.authorName)}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={cardStyle(24)}>
+        <div
+          style={{
+            alignItems: 'center',
+            borderBottom: `1px solid ${colors.border}`,
+            display: 'flex',
+            gap: 16,
+            justifyContent: 'space-between',
+            margin: '-24px -24px 0',
+            padding: '20px 24px',
+          }}
+        >
+          <SectionTitle
+            title="Missing Required Text"
+            description="Review entries missing one or more configured text fields across the monitored collection types."
+          />
+          <div
+            style={{
+              alignSelf: 'flex-start',
+              color: colors.foreground,
+              fontSize: 16,
+              fontWeight: 600,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {loading ? '...' : `${missingRequiredTextItems.length} issues`}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 24 }}>
+          {loading ? (
+            <div style={{ color: colors.muted, fontSize: 14 }}>Loading missing fields...</div>
+          ) : missingRequiredTextItems.length === 0 ? (
+            <div style={{ color: colors.muted, fontSize: 14 }}>
+              No entries are currently missing configured text fields.
+            </div>
+          ) : (
+            <div
+              style={{
+                border: `1px solid ${colors.border}`,
+                borderRadius: 14,
+                overflow: 'hidden',
+              }}
+            >
+              <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Entry</th>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Collection Type</th>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Missing Fields</th>
+                    <th style={{ ...tableCellStyle(), ...smallLabelStyle(), borderTop: 'none' }}>Last Updated</th>
+                    <th style={{ ...tableCellStyle('center'), ...smallLabelStyle(), borderTop: 'none' }}>Author</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {missingRequiredTextItems.map((item) => (
+                    <tr key={`${item.contentTypeSlug}:${item.entryId}:missing-text`}>
+                      <td style={tableCellStyle()}>
+                        <a
+                          href={`/admin/content/${item.contentTypeSlug}/${item.entryId}`}
+                          style={{
+                            color: colors.foreground,
+                            fontSize: 14,
+                            fontWeight: 600,
+                            textDecoration: 'none',
+                          }}
+                        >
+                          {item.entryLabel}
+                        </a>
+                      </td>
+                      <td style={tableCellStyle()}>
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          <span style={{ fontWeight: 600 }}>{item.contentTypeName}</span>
+                          <span style={{ color: colors.muted, fontSize: 12 }}>{item.contentTypeSlug}</span>
+                        </div>
+                      </td>
+                      <td style={tableCellStyle()}>
+                        <span style={{ color: colors.warningText, fontSize: 13 }}>
+                          {item.missingFields.map(humanize).join(', ')}
+                        </span>
                       </td>
                       <td style={tableCellStyle()}>
                         <span style={{ color: colors.muted }}>{formatDateTime(item.updatedAt)}</span>
